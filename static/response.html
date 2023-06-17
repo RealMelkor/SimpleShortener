@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 	<head>
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta charset="utf-8">
 		<title>Simple Shortener</title>
 		<style>
@@ -32,24 +33,30 @@ h1 a {
 	color: #999;
 }
 h1 a:visited {
-  color: #999;
+	color: #999;
+}
+#center {
+	margin: 0 auto;
+	width: 448px;
+	text-align: center;
 }
 #inside {
+	padding: 20px;
 	background-color: #222;
-	margin: 50px 0px 0px 100px;
+	margin-top: 50px;
 	border: 4px solid #555;
 	width: 400px;
 	border-radius: 5px;
-	padding: 20px;
-	height: 99px;
 }
 		</style>
 	</head>
 	<body>
 		<div>
-			<div id="inside">
-				<h1><a href="/">Simple Shortener</a></h1>
-				<p>{{.}}</p>
+			<div id="center">
+				<div id="inside">
+					<h1><a href="/">Simple Shortener</a></h1>
+					<p>{{.}}</p>
+				</div>
 			</div>
 		</div>
 	</body>
