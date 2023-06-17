@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<title>Simple Shortener</title>
+		<style>
+html, body {
+	margin: 0;
+	height: 100%;
+}
+body {
+	background-color: #001c25;
+	font-family: monospace, monospace;
+}
+div {
+	padding: 20px;
+}
+label {
+	font-size: 25px;
+	font-weight: bold;
+	color: #999;
+}
+form {
+	background-color: #222;
+	margin: 50px 0px 0px 100px;
+	border: 4px solid #555;
+	width: 400px;
+	border-radius: 5px;
+	padding: 20px;
+}
+::placeholder {
+	color: #333;
+	opacity: 1;
+}
+#url {
+	font-family: inherit;
+	font-size: 1em;
+	margin: 10px 0px 10px 10px;
+	width: 90%;
+	background-color: #777;
+	border-color: #555;
+	border-radius: 3px;
+	color: #111;
+}
+#btn {
+	font-family: inherit;
+	font-size: 1em;
+	margin-left: 70%; 
+	background-color: #777;
+	border-color: #555;
+	border-radius: 3px;
+	color: #111;
+}
+		</style>
+	</head>
+	<body>
+		<div>
+			<form method="POST">
+				<label for="url">Simple Shortener</label><br>
+				<input type="text" id="url" name="url" placeholder="Enter long URL"><br>
+				<input type="submit" id="btn" value="Shorten URL">
+			</form>
+		</div>
+	</body>
+</html>
