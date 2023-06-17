@@ -1,0 +1,21 @@
+#!/bin/sh
+
+# PROVIDE: simpleshortener
+# REQUIRE: LOGIN
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name=simpleshortener
+rcvar=simpleshortener_enable
+
+load_rc_config $name
+
+: ${simpleshortener_enable="NO"}
+
+pidfile="/var/run/${name}.pid"
+procname=/usr/local/bin/simpleshortener
+command=/usr/sbin/daemon
+command_args="-f -p ${pidfile} -u www -o /var/log/simpleshortener.log ${procname}"
+
+run_rc_command "$1"
