@@ -20,9 +20,12 @@ import (
 )
 
 const maxUrlLength = 2048
+const characters = "abcdefghijklmnopqrstuvwxyz0123456789"
 const newLink = "Your shortened URL link is : <a href=\"%s\">%s</a>"
 const saveLinksEvery = 30 // seconds
+const updateLengthEvery = 90 // seconds
 const limitPerIP = 3 // seconds between creation of link per ip
+const maxRandLength = 64
 
 var responseTemplate *template.Template
 var clients = map[string]int64{}
@@ -41,8 +44,12 @@ var favicon string
 
 func updateLength() {
 	for {
-		linkLength = 3 + int(math.Sqrt(float64(len(redirects)))) / 70
-		time.Sleep(time.Second * 60)
+		i := 3 + int(math.Sqrt(float64(len(redirects)))) / 70
+		if i > maxRandLength {
+			i = maxRandLength
+		}
+		linkLength = i
+		time.Sleep(time.Second * updateLengthEvery)
 	}
 }
 
@@ -69,7 +76,7 @@ func saveLinks() {
 			f, err := os.OpenFile(cfg.SaveLinks,
 				os.O_APPEND | os.O_CREATE | os.O_WRONLY, 0600)
 			if err != nil {
-				log.Fatal(err)
+				log.Println(err)
 			}
 			elements := []*list.Element{}
 			for e := newLinks.Front(); e != nil; e = e.Next() {
@@ -95,12 +102,13 @@ func saveLinks() {
 }
 
 func randomString(n int) string {
-	table := "abcdefghijklmnopqrstuvwxyz0123456789"
-	str := ""
-	for i := 0; i < n; i++ {
-		str += string(table[rand.Int() % len(table)])
+	var random [maxRandLength]byte // n should never be above 64
+	b := make([]byte, n)
+	rand.Read(random[:n])
+	for i := range b {
+		b[i] = characters[int64(random[i]) % int64(len(characters))]
 	}
-	return str
+	return string(b)
 }
 
 func response(w http.ResponseWriter, str string, code int) {
