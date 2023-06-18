@@ -5,6 +5,7 @@ import (
 	"time"
 	"fmt"
 	"strconv"
+	"strings"
 	"net"
         "net/url"
         "net/http"
@@ -13,6 +14,7 @@ import (
 	"math/rand"
 	"math"
 	"os"
+	"errors"
 	"encoding/json"
 	_ "embed"
 )
@@ -21,6 +23,8 @@ var responseTemplate *template.Template
 const maxUrlLength = 2048
 const newLink = "Your shortened URL link is : <a href=\"%s\">%s</a>"
 const saveLinksEvery = 60 // seconds
+const limitPerIP = 3 // seconds between creation of link per ip
+var clients = map[string]int64{}
 var redirects = map[string]string{}
 var linkLength = 3
 
@@ -79,6 +83,23 @@ func response(w http.ResponseWriter, str string, code int) {
 	}
 }
 
+func check(req *http.Request) error {
+	addr := strings.Split(req.RemoteAddr, ":")
+	if len(addr) != 2 {
+		return errors.New("Invalid remote address")
+	}
+	// check when was the last time the ip created an url
+	last, ok := clients[addr[0]]
+	now := time.Now().Unix()
+	if ok {
+		if now - last < limitPerIP {
+			return errors.New("Rate limited")
+		}
+	}
+	clients[addr[0]] = time.Now().Unix()
+	return nil
+}
+
 type FastCGIServer struct{}
 func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method == "POST" {
@@ -89,19 +110,25 @@ func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// check if url is a valid url
 		urlValue := req.FormValue("url")
 		if len(urlValue) >= maxUrlLength {
-			log.Println("url too long")
+			log.Println(req.RemoteAddr, "url too long")
 			response(w, "URL is too long", 400)
 			return
 		}
 		u, err := url.ParseRequestURI(urlValue)
 		if err != nil {
-			log.Println(err)
+			log.Println(req.RemoteAddr, err)
 			response(w, "Invalid URL", 400)
 			return
 		}
 		if u.Host == req.Host {
-			log.Println("tried to create redirect on current host")
+			log.Println(req.RemoteAddr,
+				"tried to create redirect on current host")
 			response(w, "Invalid URL", 400)
+			return
+		}
+		if err := check(req); err != nil {
+			log.Println(req.RemoteAddr, err)
+			response(w, err.Error(), 400)
 			return
 		}
 		// check if the link is already taken
@@ -116,7 +143,8 @@ func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		redirects[str] = u.String()
 		str = req.URL.String() + str
 		response(w, fmt.Sprintf(newLink, str, str), 200)
-		log.Println(str, "new url created redirecting to", u.String())
+		log.Println(req.RemoteAddr, "created a new url", str,
+				"redirecting to", u.String())
 		return
 	} else if req.Method == "GET" {
 		if req.URL.Path == "/favicon.ico" {
