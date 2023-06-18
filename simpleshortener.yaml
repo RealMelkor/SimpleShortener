@@ -1,7 +1,5 @@
 base-url: "/" # base url of the fcgi program, usually /
-captcha: false # complete a captcha to shorten an url
-pow-challenge: false # proof-of-work challenge to shorten an url (javascript required)
-save-links: "links.json" # path to a json file to save links
+save-links: "links.txt" # path to a file to save links
 network:
   type: "tcp" # network protocol (tcp or unix)
   port: 9000 # port to listen on

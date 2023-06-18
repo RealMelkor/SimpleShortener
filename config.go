@@ -6,8 +6,6 @@ import (
 
 type config struct {
 	BaseURL		string	`fig:"base-url" default:"/"`
-	Captcha		bool	`fig:"captcha"`
-	PoWChallenge	bool	`fig:"pow-challenge"`
 	SaveLinks	string	`fig:"save-links"`
         Network         struct {
                 Type    string  `fig:"type" default:"tcp"`

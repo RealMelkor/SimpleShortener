@@ -15,17 +15,19 @@ import (
 	"math"
 	"os"
 	"errors"
-	"encoding/json"
+	"container/list"
 	_ "embed"
 )
 
-var responseTemplate *template.Template
 const maxUrlLength = 2048
 const newLink = "Your shortened URL link is : <a href=\"%s\">%s</a>"
-const saveLinksEvery = 60 // seconds
+const saveLinksEvery = 30 // seconds
 const limitPerIP = 3 // seconds between creation of link per ip
+
+var responseTemplate *template.Template
 var clients = map[string]int64{}
 var redirects = map[string]string{}
+var newLinks *list.List
 var linkLength = 3
 
 //go:embed static/index.html
@@ -49,17 +51,42 @@ func loadLinks() error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data, &redirects)
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		words := strings.Split(line, " ")
+		if len(words) != 2 {
+			continue
+		}
+		redirects[words[0]] = words[1]
+	}
+	return nil
 }
 
 func saveLinks() {
+	newLinks = list.New()
 	for {
-		data, err := json.Marshal(redirects)
-		if err != nil {
-			log.Println(err)
-		} else {
-			err := os.WriteFile(cfg.SaveLinks, data, 0600)
+		if newLinks.Len() > 0 {
+			f, err := os.OpenFile(cfg.SaveLinks,
+				os.O_APPEND | os.O_CREATE | os.O_WRONLY, 0600)
 			if err != nil {
+				log.Fatal(err)
+			}
+			elements := []*list.Element{}
+			for e := newLinks.Front(); e != nil; e = e.Next() {
+				res, ok := e.Value.(string)
+				if !ok {
+					continue
+				}
+				_, err := f.Write([]byte(res))
+				if err != nil {
+					log.Println(err)
+				}
+				elements = append(elements, e)
+			}
+			for _, v := range elements {
+				newLinks.Remove(v)
+			}
+			if err := f.Close(); err != nil {
 				log.Println(err)
 			}
 		}
@@ -100,6 +127,21 @@ func check(req *http.Request) error {
 	return nil
 }
 
+func create(u *url.URL, req *http.Request) string {
+	var str string
+	// check if the link is already taken
+	for i := 0; ; i++ {
+		str = randomString(linkLength + i)
+		_, ok := redirects[str]
+		if !ok {
+			break
+		}
+	}
+	redirects[str] = u.String()
+	newLinks.PushBack(str + " " + u.String() + "\n")
+	return req.URL.String() + str
+}
+
 type FastCGIServer struct{}
 func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method == "POST" {
@@ -131,17 +173,7 @@ func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			response(w, err.Error(), 400)
 			return
 		}
-		// check if the link is already taken
-		var str string
-		for i := 0; ; i++ {
-			str = randomString(linkLength + i)
-			_, ok := redirects[str]
-			if !ok {
-				break
-			}
-		}
-		redirects[str] = u.String()
-		str = req.URL.String() + str
+		str := create(u, req)
 		response(w, fmt.Sprintf(newLink, str, str), 200)
 		log.Println(req.RemoteAddr, "created a new url", str,
 				"redirecting to", u.String())
