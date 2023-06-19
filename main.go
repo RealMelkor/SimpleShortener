@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"time"
-	"fmt"
 	"strconv"
 	"strings"
 	"net"
@@ -14,6 +13,7 @@ import (
 	"math/rand"
 	"math"
 	"os"
+	"bytes"
 	"errors"
 	"container/list"
 	_ "embed"
@@ -21,23 +21,25 @@ import (
 
 const maxUrlLength = 2048
 const characters = "abcdefghijklmnopqrstuvwxyz0123456789"
-const newLink = "Your shortened URL link is : <a href=\"%s\">%s</a>"
 const saveLinksEvery = 30 // seconds
 const updateLengthEvery = 90 // seconds
 const limitPerIP = 3 // seconds between creation of link per ip
 const maxRandLength = 64
 
-var responseTemplate *template.Template
+type templateData struct {
+	Error	string
+	Url	string
+}
+
+var page *template.Template
 var clients = map[string]int64{}
 var redirects = map[string]string{}
 var newLinks *list.List
 var linkLength = 3
-
-//go:embed static/index.html
 var indexPage string
 
-//go:embed static/response.html
-var responsePage string
+//go:embed static/index.html
+var htmlPage string
 
 //go:embed static/favicon.ico
 var favicon string
@@ -102,7 +104,7 @@ func saveLinks() {
 }
 
 func randomString(n int) string {
-	var random [maxRandLength]byte // n should never be above 64
+	var random [maxRandLength]byte // n should never be above maxRandLength
 	b := make([]byte, n)
 	rand.Read(random[:n])
 	for i := range b {
@@ -113,7 +115,14 @@ func randomString(n int) string {
 
 func response(w http.ResponseWriter, str string, code int) {
 	w.WriteHeader(code)
-	if err := responseTemplate.Execute(w, str); err != nil {
+	a := ""
+	b := ""
+	if code == 200 {
+		b = str
+	} else {
+		a = str
+	}
+	if err := page.Execute(w, templateData{a, b}); err != nil {
 		log.Println(err)
 	}
 }
@@ -182,7 +191,7 @@ func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		str := create(u, req)
-		response(w, fmt.Sprintf(newLink, str, str), 200)
+		response(w, str, 200)
 		log.Println(req.RemoteAddr, "created a new url", str,
 				"redirecting to", u.String())
 		return
@@ -249,10 +258,15 @@ func main() {
 	}
 
 	var err error
-	responseTemplate, err = template.New("response").Parse(responsePage)
+	page, err = template.New("html").Parse(htmlPage)
 	if err != nil {
 		log.Fatalln(err)
 	}
+	var buf bytes.Buffer
+	if err := page.Execute(&buf, templateData{"", ""}); err != nil {
+		log.Fatalln(err)
+	}
+	indexPage = buf.String()
 
 	go updateLength()
 	if cfg.SaveLinks != "" {
