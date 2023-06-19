@@ -128,19 +128,20 @@ func response(w http.ResponseWriter, str string, code int) {
 }
 
 func check(req *http.Request) error {
-	addr := strings.Split(req.RemoteAddr, ":")
-	if len(addr) != 2 {
+	i := strings.LastIndex(req.RemoteAddr, ":")
+	if i < 0 {
 		return errors.New("Invalid remote address")
 	}
+	addr := req.RemoteAddr[:i]
 	// check when was the last time the ip created an url
-	last, ok := clients[addr[0]]
+	last, ok := clients[addr]
 	now := time.Now().Unix()
 	if ok {
 		if now - last < limitPerIP {
 			return errors.New("Rate limited")
 		}
 	}
-	clients[addr[0]] = time.Now().Unix()
+	clients[addr] = time.Now().Unix()
 	return nil
 }
 
