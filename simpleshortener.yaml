@@ -1,5 +1,6 @@
 base-url: "/" # base url of the fcgi program, usually /
 save-links: "links.txt" # path to a file to save links
+alias: false # allow creation of links with specific alias
 network:
   type: "tcp" # network protocol (tcp or unix)
   port: 9000 # port to listen on

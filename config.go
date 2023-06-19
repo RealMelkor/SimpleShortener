@@ -7,6 +7,7 @@ import (
 type config struct {
 	BaseURL		string	`fig:"base-url" default:"/"`
 	SaveLinks	string	`fig:"save-links"`
+	Alias		bool	`fig:"alias"`
         Network         struct {
                 Type    string  `fig:"type" default:"tcp"`
                 Port    int     `fig:"port" default:"9000"`

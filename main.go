@@ -20,6 +20,7 @@ import (
 )
 
 const maxUrlLength = 2048
+const maxAliasLength = 128
 const characters = "abcdefghijklmnopqrstuvwxyz0123456789"
 const saveLinksEvery = 30 // seconds
 const updateLengthEvery = 90 // seconds
@@ -29,6 +30,7 @@ const maxRandLength = 64
 type templateData struct {
 	Error	string
 	Url	string
+	Alias	bool
 }
 
 var page *template.Template
@@ -122,12 +124,12 @@ func response(w http.ResponseWriter, str string, code int) {
 	} else {
 		a = str
 	}
-	if err := page.Execute(w, templateData{a, b}); err != nil {
+	if err := page.Execute(w, templateData{a, b, cfg.Alias}); err != nil {
 		log.Println(err)
 	}
 }
 
-func check(req *http.Request) error {
+func checkIP(req *http.Request) error {
 	i := strings.LastIndex(req.RemoteAddr, ":")
 	if i < 0 {
 		return errors.New("Invalid remote address")
@@ -145,7 +147,20 @@ func check(req *http.Request) error {
 	return nil
 }
 
-func create(u *url.URL, req *http.Request) string {
+func create(u *url.URL, req *http.Request, alias string) (string, error) {
+	if len(alias) >= maxAliasLength {
+		return "", errors.New("This alias is too long")
+	}
+	_, ok := redirects[alias]
+	if ok {
+		return "", errors.New("This alias is already taken")
+	}
+	redirects[alias] = u.String()
+	newLinks.PushBack(alias + " " + u.String() + "\n")
+	return req.URL.String() + alias, nil
+}
+
+func createRandom(u *url.URL, req *http.Request) string {
 	var str string
 	// check if the link is already taken
 	for i := 0; ; i++ {
@@ -186,12 +201,26 @@ func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			response(w, "Invalid URL", 400)
 			return
 		}
-		if err := check(req); err != nil {
+		if err := checkIP(req); err != nil {
 			log.Println(req.RemoteAddr, err)
 			response(w, err.Error(), 400)
 			return
 		}
-		str := create(u, req)
+		var str string
+		alias := ""
+		if cfg.Alias {
+			alias = req.FormValue("alias")
+		}
+		if alias == "" {
+			str = createRandom(u, req)
+		} else {
+			str, err = create(u, req, alias)
+			if err != nil {
+				log.Println(req.RemoteAddr, err)
+				response(w, err.Error(), 400)
+				return
+			}
+		}
 		response(w, str, 200)
 		log.Println(req.RemoteAddr, "created a new url", str,
 				"redirecting to", u.String())
@@ -264,7 +293,8 @@ func main() {
 		log.Fatalln(err)
 	}
 	var buf bytes.Buffer
-	if err := page.Execute(&buf, templateData{"", ""}); err != nil {
+	data := templateData{"", "", cfg.Alias}
+	if err := page.Execute(&buf, data); err != nil {
 		log.Fatalln(err)
 	}
 	indexPage = buf.String()
