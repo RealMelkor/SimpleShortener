@@ -1,10 +1,13 @@
 # Simple Shortener
 
-A FCGI program to self-host a URL shortener.
+A program to self-host a URL shortener as a web server or as a fcgi program.
 
 [Live-Demo](https://gmi.gd/)
 
-## Web servers configuration
+## FastCGI Web servers configuration
+
+To run Simple Shortener as a FastCGI program, the fcgi mode needs to be enabled
+first in the simpleshortener.yaml configuration file.
 
 Configuration example for [nginx](https://nginx.org/) :
 
@@ -31,4 +34,5 @@ are embedded into the executable.
 ## Configuration file
 
 The simpleshortener.yaml configuration file needs to be in either the working
-directory of the executable, in /etc/simpleshortener, or in /usr/local/etc/simpleshortener
+directory of the executable, in '/etc/simpleshortener', or in
+'/usr/local/etc/simpleshortener'.

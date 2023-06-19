@@ -247,8 +247,12 @@ func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			response(w, "Page not found", 404)
 			return
 		}
-		w.WriteHeader(302)
-		w.Header().Set("Location", url)
+		if cfg.Fcgi {
+			w.WriteHeader(302)
+			w.Header().Set("Location", url)
+		} else {
+			http.Redirect(w, req, url, http.StatusSeeOther)
+		}
 		return
 	}
 }
@@ -311,7 +315,13 @@ func main() {
 	}
 	
         b := new(FastCGIServer)
-        if err := fcgi.Serve(listener, b); err != nil {
-                log.Fatalln(err)
-        }
+	if cfg.Fcgi {
+		if err := fcgi.Serve(listener, b); err != nil {
+			log.Fatalln(err)
+		}
+	} else {
+		if err := http.Serve(listener, b); err != nil {
+			log.Fatalln(err)
+		}
+	}
 }
