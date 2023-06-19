@@ -151,6 +151,12 @@ func create(u *url.URL, req *http.Request, alias string) (string, error) {
 	if len(alias) >= maxAliasLength {
 		return "", errors.New("This alias is too long")
 	}
+	alias = strings.ToLower(alias)
+	for _, v := range []byte(alias) {
+		if (v < 'a' || v > 'z') && (v < '0' || v > '9') {
+			return "", errors.New("Invalid alias")
+		}
+	}
 	_, ok := redirects[alias]
 	if ok {
 		return "", errors.New("This alias is already taken")
