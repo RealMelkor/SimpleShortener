@@ -9,6 +9,7 @@ type config struct {
 	SaveLinks	string	`fig:"save-links"`
 	Alias		bool	`fig:"alias"`
 	Fcgi		bool	`fig:"fcgi"`
+	CSProtection	bool	`fig:"cs-protection"`
         Network         struct {
                 Type    string  `fig:"type" default:"tcp"`
                 Port    int     `fig:"port" default:"9000"`

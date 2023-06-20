@@ -186,6 +186,22 @@ func createRandom(u *url.URL, req *http.Request) string {
 type FastCGIServer struct{}
 func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method == "POST" {
+		if cfg.CSProtection {
+			// prevent cross-site request
+			u, err := url.ParseRequestURI(req.Header.Get("Origin"))
+			if err != nil {
+				log.Println(req.RemoteAddr, err)
+				response(w, "Invalid origin header", 400)
+				return
+			}
+			if req.Host != u.Host {
+				log.Println(req.RemoteAddr,
+					"attempted a cross-site request",
+					"(" + u.Host + ")")
+				response(w, "Cross-Site request detected", 400)
+				return
+			}
+		}
 		if req.URL.Path != cfg.BaseURL {
 			response(w, "Page not found", 404)
 			return
