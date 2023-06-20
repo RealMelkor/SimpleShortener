@@ -31,6 +31,7 @@ type templateData struct {
 	Error	string
 	Url	string
 	Alias	bool
+	BaseURL	string
 }
 
 var page *template.Template
@@ -124,7 +125,8 @@ func response(w http.ResponseWriter, str string, code int) {
 	} else {
 		a = str
 	}
-	if err := page.Execute(w, templateData{a, b, cfg.Alias}); err != nil {
+	err := page.Execute(w, templateData{a, b, cfg.Alias, cfg.BaseURL})
+	if err != nil {
 		log.Println(err)
 	}
 }
@@ -303,7 +305,7 @@ func main() {
 		log.Fatalln(err)
 	}
 	var buf bytes.Buffer
-	data := templateData{"", "", cfg.Alias}
+	data := templateData{"", "", cfg.Alias, cfg.BaseURL}
 	if err := page.Execute(&buf, data); err != nil {
 		log.Fatalln(err)
 	}

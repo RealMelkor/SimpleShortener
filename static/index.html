@@ -83,7 +83,7 @@ a:visited {
 	<body>
 		<div class="center">
 			<div class="box">
-				<form method="POST">
+				<form action="{{.BaseURL}}" method="POST">
 					<label for="url">Simple Shortener</label><br>
 					<input class="textfield" type="text" id="url" name="url" placeholder="Enter long URL"><br>
 {{if .Alias}}
