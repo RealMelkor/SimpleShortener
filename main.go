@@ -155,7 +155,7 @@ func create(u *url.URL, req *http.Request, alias string) (string, error) {
 	}
 	alias = strings.ToLower(alias)
 	for _, v := range []byte(alias) {
-		if (v < 'a' || v > 'z') && (v < '0' || v > '9') {
+		if (v < 'a' || v > 'z') && (v < '0' || v > '9') && v != '_' {
 			return "", errors.New("Invalid alias")
 		}
 	}
@@ -213,13 +213,13 @@ func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			response(w, "URL is too long", 400)
 			return
 		}
-		u, err := url.ParseRequestURI(urlValue)
+		u, err := url.Parse(urlValue)
 		if err != nil {
 			log.Println(req.RemoteAddr, err)
 			response(w, "Invalid URL", 400)
 			return
 		}
-		if u.Host == req.Host {
+		if u.Host == "" || u.Host == req.Host {
 			log.Println(req.RemoteAddr,
 				"tried to create redirect on current host")
 			response(w, "Invalid URL", 400)
