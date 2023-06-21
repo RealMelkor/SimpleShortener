@@ -15,7 +15,6 @@ import (
 	"os"
 	"bytes"
 	"errors"
-	"container/list"
 	_ "embed"
 )
 
@@ -37,7 +36,7 @@ type templateData struct {
 var page *template.Template
 var clients = map[string]int64{}
 var redirects = map[string]string{}
-var newLinks *list.List
+var newLinks *stack
 var linkLength = 3
 var indexPage string
 
@@ -75,28 +74,23 @@ func loadLinks() error {
 }
 
 func saveLinks() {
-	newLinks = list.New()
+	newLinks = NewStack()
 	for {
-		if newLinks.Len() > 0 {
+		if !newLinks.IsEmpty() {
 			f, err := os.OpenFile(cfg.SaveLinks,
 				os.O_APPEND | os.O_CREATE | os.O_WRONLY, 0600)
 			if err != nil {
 				log.Println(err)
 			}
-			elements := []*list.Element{}
-			for e := newLinks.Front(); e != nil; e = e.Next() {
-				res, ok := e.Value.(string)
-				if !ok {
-					continue
+			for {
+				v, err := newLinks.Pop()
+				if err != nil {
+					break
 				}
-				_, err := f.Write([]byte(res))
+				_, err = f.Write([]byte(v))
 				if err != nil {
 					log.Println(err)
 				}
-				elements = append(elements, e)
-			}
-			for _, v := range elements {
-				newLinks.Remove(v)
 			}
 			if err := f.Close(); err != nil {
 				log.Println(err)
@@ -164,7 +158,7 @@ func create(u *url.URL, req *http.Request, alias string) (string, error) {
 		return "", errors.New("This alias is already taken")
 	}
 	redirects[alias] = u.String()
-	newLinks.PushBack(alias + " " + u.String() + "\n")
+	newLinks.Push(alias + " " + u.String() + "\n")
 	return req.URL.String() + alias, nil
 }
 
@@ -179,7 +173,7 @@ func createRandom(u *url.URL, req *http.Request) string {
 		}
 	}
 	redirects[str] = u.String()
-	newLinks.PushBack(str + " " + u.String() + "\n")
+	newLinks.Push(str + " " + u.String() + "\n")
 	return req.URL.String() + str
 }
 
