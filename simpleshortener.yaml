@@ -4,7 +4,7 @@ alias: true # allow creation of links with specific alias
 cs-protection: true # protection from cross-site requests
 rate-limit: 3 # seconds between link creation per ip
 network:
-  fcgi: true # listen as a fcgi program instead of http server
+  fcgi: false # listen as a fcgi program instead of http server
   type: "tcp" # network protocol (tcp or unix)
   port: 9000 # port to listen on
   address: "localhost" # address to listen on

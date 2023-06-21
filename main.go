@@ -15,6 +15,7 @@ import (
 	"os"
 	"bytes"
 	"errors"
+	"sync"
 	_ "embed"
 )
 
@@ -32,11 +33,15 @@ type templateData struct {
 	BaseURL	string
 }
 
+type shortener struct {
+	clients map[string]int64
+	redirects map[string]string
+	lock sync.Mutex
+	newLinks *stack
+	linkLength int
+}
+
 var page *template.Template
-var clients = map[string]int64{}
-var redirects = map[string]string{}
-var newLinks *stack
-var linkLength = 3
 var indexPage string
 
 //go:embed static/index.html
@@ -45,18 +50,61 @@ var htmlPage string
 //go:embed static/favicon.ico
 var favicon string
 
-func updateLength() {
+func NewShortener() *shortener {
+	return &shortener{
+		map[string]int64{},
+		map[string]string{},
+		sync.Mutex{},
+		NewStack(),
+		2,
+	}
+}
+
+func (s *shortener) Length() int {
+	s.lock.Lock()
+	length := len(s.redirects)
+	s.lock.Unlock()
+	return length
+}
+
+func (s *shortener) SetRedirect(key string, value string) {
+	s.lock.Lock()
+	s.redirects[key] = value
+	s.lock.Unlock()
+}
+
+func (s *shortener) GetRedirect(key string) (string, bool) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	v, ok := s.redirects[key]
+	return v, ok
+}
+
+func (s *shortener) AddRedirect(key string, value string) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	_, ok := s.redirects[key]
+	if ok {
+		return errors.New("This alias is already taken")
+	}
+	s.redirects[key] = value
+	s.newLinks.Push(key + " " + value + "\n")
+	return nil
+}
+
+func (s *shortener) UpdateLength() {
+	l36 := math.Log(36)
 	for {
-		i := 3 + int(math.Sqrt(float64(len(redirects)))) / 70
+		i := 2 + int(math.Log(float64(s.Length())) / l36)
 		if i > maxRandLength {
 			i = maxRandLength
 		}
-		linkLength = i
+		s.linkLength = i
 		time.Sleep(time.Second * updateLengthEvery)
 	}
 }
 
-func loadLinks() error {
+func (s *shortener) LoadLinks() error {
 	data, err := os.ReadFile(cfg.SaveLinks)
 	if err != nil {
 		return err
@@ -67,22 +115,22 @@ func loadLinks() error {
 		if len(words) != 2 {
 			continue
 		}
-		redirects[words[0]] = words[1]
+		s.SetRedirect(words[0], words[1])
 	}
 	return nil
 }
 
-func saveLinks() {
-	newLinks = NewStack()
+func (s *shortener) SaveLinks() {
+	s.newLinks = NewStack()
 	for {
-		if !newLinks.IsEmpty() {
+		if !s.newLinks.IsEmpty() {
 			f, err := os.OpenFile(cfg.SaveLinks,
 				os.O_APPEND | os.O_CREATE | os.O_WRONLY, 0600)
 			if err != nil {
 				log.Println(err)
 			}
 			for {
-				v, err := newLinks.Pop()
+				v, err := s.newLinks.Pop()
 				if err != nil {
 					break
 				}
@@ -124,7 +172,7 @@ func response(w http.ResponseWriter, str string, code int) {
 	}
 }
 
-func checkIP(req *http.Request) error {
+func (s *shortener) CheckIP(req *http.Request) error {
 	if cfg.RateLimit == 0 {
 		return nil
 	}
@@ -134,18 +182,19 @@ func checkIP(req *http.Request) error {
 	}
 	addr := req.RemoteAddr[:i]
 	// check when was the last time the ip created an url
-	last, ok := clients[addr]
+	last, ok := s.clients[addr]
 	now := time.Now().Unix()
 	if ok {
 		if now - last <= cfg.RateLimit {
 			return errors.New("Rate limited")
 		}
 	}
-	clients[addr] = time.Now().Unix()
+	s.clients[addr] = time.Now().Unix()
 	return nil
 }
 
-func create(u *url.URL, req *http.Request, alias string) (string, error) {
+func (s *shortener) Create(u *url.URL, req *http.Request, alias string) (
+		string, error) {
 	if len(alias) >= maxAliasLength {
 		return "", errors.New("This alias is too long")
 	}
@@ -155,32 +204,25 @@ func create(u *url.URL, req *http.Request, alias string) (string, error) {
 			return "", errors.New("Invalid alias")
 		}
 	}
-	_, ok := redirects[alias]
-	if ok {
-		return "", errors.New("This alias is already taken")
+	if err := s.AddRedirect(alias, u.String()); err != nil {
+		return "", err
 	}
-	redirects[alias] = u.String()
-	newLinks.Push(alias + " " + u.String() + "\n")
 	return req.URL.String() + alias, nil
 }
 
-func createRandom(u *url.URL, req *http.Request) string {
+func (s *shortener) CreateRandom(u *url.URL, req *http.Request) string {
 	var str string
 	// check if the link is already taken
 	for i := 0; ; i++ {
-		str = randomString(linkLength + i)
-		_, ok := redirects[str]
-		if !ok {
+		str = randomString(s.linkLength + i)
+		if err := s.AddRedirect(str, u.String()); err == nil {
 			break
 		}
 	}
-	redirects[str] = u.String()
-	newLinks.Push(str + " " + u.String() + "\n")
 	return req.URL.String() + str
 }
 
-type FastCGIServer struct{}
-func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (s *shortener) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method == "POST" {
 		if cfg.CSProtection {
 			// prevent cross-site request
@@ -221,7 +263,7 @@ func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			response(w, "Invalid URL", 400)
 			return
 		}
-		if err := checkIP(req); err != nil {
+		if err := s.CheckIP(req); err != nil {
 			log.Println(req.RemoteAddr, err)
 			response(w, err.Error(), 400)
 			return
@@ -232,9 +274,9 @@ func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			alias = req.FormValue("alias")
 		}
 		if alias == "" {
-			str = createRandom(u, req)
+			str = s.CreateRandom(u, req)
 		} else {
-			str, err = create(u, req, alias)
+			str, err = s.Create(u, req, alias)
 			if err != nil {
 				log.Println(req.RemoteAddr, err)
 				response(w, err.Error(), 400)
@@ -256,7 +298,7 @@ func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			w.Write([]byte(indexPage))
 			return
 		}
-		url, ok := redirects[req.URL.Path[1:]]
+		url, ok := s.GetRedirect(req.URL.Path[1:])
 		if !ok {
 			response(w, "Page not found", 404)
 			return
@@ -273,6 +315,7 @@ func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func main() {
 
 	rand.Seed(time.Now().UnixNano())
+	shortener := NewShortener()
 
         if err := load(); err != nil {
                 log.Fatalln(err)
@@ -305,7 +348,7 @@ func main() {
         }
 
 	if cfg.SaveLinks != "" {
-		if err := loadLinks(); err != nil {
+		if err := shortener.LoadLinks(); err != nil {
 			log.Println(err)
 		}
 	}
@@ -322,18 +365,17 @@ func main() {
 	}
 	indexPage = buf.String()
 
-	go updateLength()
+	go shortener.UpdateLength()
 	if cfg.SaveLinks != "" {
-		go saveLinks()
+		go shortener.SaveLinks()
 	}
 	
-        b := new(FastCGIServer)
 	if cfg.Network.Fcgi {
-		if err := fcgi.Serve(listener, b); err != nil {
+		if err := fcgi.Serve(listener, shortener); err != nil {
 			log.Fatalln(err)
 		}
 	} else {
-		if err := http.Serve(listener, b); err != nil {
+		if err := http.Serve(listener, shortener); err != nil {
 			log.Fatalln(err)
 		}
 	}
