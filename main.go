@@ -23,7 +23,6 @@ const maxAliasLength = 128
 const characters = "abcdefghijklmnopqrstuvwxyz0123456789"
 const saveLinksEvery = 30 // seconds
 const updateLengthEvery = 90 // seconds
-const limitPerIP = 3 // seconds between creation of link per ip
 const maxRandLength = 64
 
 type templateData struct {
@@ -126,6 +125,9 @@ func response(w http.ResponseWriter, str string, code int) {
 }
 
 func checkIP(req *http.Request) error {
+	if cfg.RateLimit == 0 {
+		return nil
+	}
 	i := strings.LastIndex(req.RemoteAddr, ":")
 	if i < 0 {
 		return errors.New("Invalid remote address")
@@ -135,7 +137,7 @@ func checkIP(req *http.Request) error {
 	last, ok := clients[addr]
 	now := time.Now().Unix()
 	if ok {
-		if now - last < limitPerIP {
+		if now - last <= cfg.RateLimit {
 			return errors.New("Rate limited")
 		}
 	}
@@ -259,13 +261,12 @@ func (s FastCGIServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			response(w, "Page not found", 404)
 			return
 		}
-		if cfg.Fcgi {
+		if cfg.Network.Fcgi {
 			w.WriteHeader(302)
 			w.Header().Set("Location", url)
 		} else {
 			http.Redirect(w, req, url, http.StatusSeeOther)
 		}
-		return
 	}
 }
 
@@ -327,7 +328,7 @@ func main() {
 	}
 	
         b := new(FastCGIServer)
-	if cfg.Fcgi {
+	if cfg.Network.Fcgi {
 		if err := fcgi.Serve(listener, b); err != nil {
 			log.Fatalln(err)
 		}
