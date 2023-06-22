@@ -39,5 +39,5 @@ func (s *stack) IsEmpty() bool {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	return len(s.s) < 1
+	return len(s.s) == 0
 }

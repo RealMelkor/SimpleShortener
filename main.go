@@ -24,7 +24,7 @@ const maxAliasLength = 128
 const characters = "abcdefghijklmnopqrstuvwxyz0123456789"
 const saveLinksEvery = 30 // seconds
 const updateLengthEvery = 90 // seconds
-const maxRandLength = 64
+const maxRandLength = 16 // 2 + ln(2^64)/ln(36) < 16
 
 type templateData struct {
 	Error	string
@@ -75,8 +75,8 @@ func (s *shortener) SetRedirect(key string, value string) {
 
 func (s *shortener) GetRedirect(key string) (string, bool) {
 	s.lock.Lock()
-	defer s.lock.Unlock()
 	v, ok := s.redirects[key]
+	s.lock.Unlock()
 	return v, ok
 }
 
