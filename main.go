@@ -85,9 +85,7 @@ func (s *shortener) AddRedirect(key string, value string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	_, ok := s.redirects[key]
-	if ok {
-		return errors.New("This alias is already taken")
-	}
+	if ok { return errors.New("This alias is already taken") }
 	s.redirects[key] = value
 	s.newLinks.Push(key + " " + value + "\n")
 	return nil
@@ -96,7 +94,7 @@ func (s *shortener) AddRedirect(key string, value string) error {
 func (s *shortener) UpdateLength() {
 	l36 := math.Log(36)
 	for {
-		i := 2 + int(math.Log(float64(s.Length())) / l36)
+		i := 2 + int(math.Log(float64(s.Length() + 1)) / l36)
 		if i > maxRandLength {
 			i = maxRandLength
 		}
@@ -107,45 +105,28 @@ func (s *shortener) UpdateLength() {
 
 func (s *shortener) LoadLinks() error {
 	data, err := os.ReadFile(cfg.SaveLinks)
-	if err != nil {
-		return err
-	}
+	if err != nil { return err }
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
 		words := strings.Split(line, " ")
-		if len(words) != 2 {
-			continue
-		}
+		if len(words) != 2 { continue }
 		s.SetRedirect(words[0], words[1])
 	}
 	return nil
 }
 
-func (s *shortener) SaveLinks() {
-	s.newLinks = NewStack()
+func (s *shortener) SaveLinks() error {
+	if s.newLinks.IsEmpty() { return nil }
+	f, err := os.OpenFile(cfg.SaveLinks,
+			os.O_APPEND | os.O_CREATE | os.O_WRONLY, 0600)
+	if err != nil { return err }
 	for {
-		if !s.newLinks.IsEmpty() {
-			f, err := os.OpenFile(cfg.SaveLinks,
-				os.O_APPEND | os.O_CREATE | os.O_WRONLY, 0600)
-			if err != nil {
-				log.Println(err)
-			}
-			for {
-				v, err := s.newLinks.Pop()
-				if err != nil {
-					break
-				}
-				_, err = f.Write([]byte(v))
-				if err != nil {
-					log.Println(err)
-				}
-			}
-			if err := f.Close(); err != nil {
-				log.Println(err)
-			}
-		}
-		time.Sleep(time.Second * saveLinksEvery)
+		v, err := s.newLinks.Pop()
+		if err != nil { break }
+		_, err = f.Write([]byte(v))
+		if err != nil { return err }
 	}
+	return f.Close()
 }
 
 func randomString(n int) (string, error) {
@@ -161,36 +142,24 @@ func randomString(n int) (string, error) {
 
 func response(w http.ResponseWriter, str string, code int) {
 	w.WriteHeader(code)
-	a := ""
-	b := ""
-	if code == 200 {
-		b = str
-	} else {
-		a = str
-	}
+	alias := ""
+	info := ""
+	if code == 200 { alias = str } else { info = str }
 	err := page.Execute(w, templateData{
-		a, b, cfg.Alias, cfg.BaseURL, cfg.AbuseEmail})
-	if err != nil {
-		log.Println(err)
-	}
+		info, alias, cfg.Alias, cfg.BaseURL, cfg.AbuseEmail})
+	if err != nil { log.Println(err) }
 }
 
 func (s *shortener) CheckIP(req *http.Request) error {
-	if cfg.RateLimit == 0 {
-		return nil
-	}
+	if cfg.RateLimit == 0 { return nil }
 	i := strings.LastIndex(req.RemoteAddr, ":")
-	if i < 0 {
-		return errors.New("Invalid remote address")
-	}
+	if i < 0 { return errors.New("Invalid remote address") }
 	addr := req.RemoteAddr[:i]
 	// check when was the last time the ip created an url
 	last, ok := s.clients[addr]
 	now := time.Now().Unix()
-	if ok {
-		if now - last <= cfg.RateLimit {
-			return errors.New("Rate limited")
-		}
+	if ok && now - last <= cfg.RateLimit {
+		return errors.New("Rate limited")
 	}
 	s.clients[addr] = time.Now().Unix()
 	return nil
@@ -213,7 +182,7 @@ func (s *shortener) Create(u *url.URL, req *http.Request, alias string) (
 	return req.URL.String() + alias, nil
 }
 
-func (s *shortener) CreateRandom(u *url.URL, req *http.Request) (string, error) {
+func (s *shortener) randomLink(u *url.URL, req *http.Request) (string, error) {
 	var str string
 	// check if the link is already taken
 	for i := 0; ; i++ {
@@ -227,139 +196,105 @@ func (s *shortener) CreateRandom(u *url.URL, req *http.Request) (string, error) 
 	return req.URL.String() + str, nil
 }
 
+func (s *shortener) ServePOST(w http.ResponseWriter, req *http.Request) error {
+	if cfg.CSProtection {
+		// prevent cross-site request
+		u, err := url.ParseRequestURI(req.Header.Get("Origin"))
+		if err != nil { return errors.New("Invalid origin header") }
+		if req.Host != u.Host {
+			return errors.New("Cross-Site request detected")
+		}
+	}
+	if req.URL.Path != cfg.BaseURL { return errors.New("Page not found") }
+	// check if url is a valid url
+	urlValue := strings.Trim(req.FormValue("url"), " ")
+	if urlValue == "" { return errors.New("Missing URL") }
+	if len(urlValue) >= maxUrlLength {
+		return errors.New("URL is too long")
+	}
+	u, err := url.Parse(urlValue)
+	if err != nil { return errors.New("Invalid URL") }
+	if u.Host == "" || u.Host == req.Host {
+		return errors.New("Invalid self-redirection")
+	}
+	if err := s.CheckIP(req); err != nil { return err }
+	var str string
+	alias := ""
+	if cfg.Alias { alias = req.FormValue("alias") }
+	if alias == "" {
+		var err error
+		str, err = s.randomLink(u, req)
+		if err != nil { return err }
+	} else {
+		str, err = s.Create(u, req, alias)
+		if err != nil { return err }
+	}
+	response(w, str, 200)
+	log.Println("[" + req.RemoteAddr + "]", "created a new url", str,
+			"redirecting to", u.String())
+	return nil
+}
+
+func (s *shortener) ServeGET(w http.ResponseWriter, req *http.Request) error {
+	if req.URL.Path == "/favicon.ico" {
+		w.WriteHeader(200)
+		w.Write([]byte(favicon))
+		return nil
+	}
+	if req.URL.Path == cfg.BaseURL {
+		w.WriteHeader(200)
+		w.Write([]byte(indexPage))
+		return nil
+	}
+	url, ok := s.GetRedirect(req.URL.Path[1:])
+	if !ok { return errors.New("Page not found") }
+	if cfg.Network.Fcgi {
+		w.WriteHeader(302)
+		w.Header().Set("Location", url)
+	} else {
+		http.Redirect(w, req, url, http.StatusSeeOther)
+	}
+	return nil
+}
+
 func (s *shortener) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	var err error
 	if req.Method == "POST" {
-		if cfg.CSProtection {
-			// prevent cross-site request
-			u, err := url.ParseRequestURI(req.Header.Get("Origin"))
-			if err != nil {
-				log.Println(req.RemoteAddr, err)
-				response(w, "Invalid origin header", 400)
-				return
-			}
-			if req.Host != u.Host {
-				log.Println(req.RemoteAddr,
-					"attempted a cross-site request",
-					"(" + u.Host + ")")
-				response(w, "Cross-Site request detected", 400)
-				return
-			}
-		}
-		if req.URL.Path != cfg.BaseURL {
-			response(w, "Page not found", 404)
-			return
-		}
-		// check if url is a valid url
-		urlValue := req.FormValue("url")
-		if urlValue == "" {
-			log.Println(req.RemoteAddr, "missing url")
-			response(w, "Missing URL", 400)
-			return
-		}
-		if len(urlValue) >= maxUrlLength {
-			log.Println(req.RemoteAddr, "url too long")
-			response(w, "URL is too long", 400)
-			return
-		}
-		u, err := url.Parse(urlValue)
-		if err != nil {
-			log.Println(req.RemoteAddr, err)
-			response(w, "Invalid URL", 400)
-			return
-		}
-		if u.Host == "" || u.Host == req.Host {
-			log.Println(req.RemoteAddr,
-				"tried to create redirect on current host")
-			response(w, "Invalid URL", 400)
-			return
-		}
-		if err := s.CheckIP(req); err != nil {
-			log.Println(req.RemoteAddr, err)
-			response(w, err.Error(), 400)
-			return
-		}
-		var str string
-		alias := ""
-		if cfg.Alias {
-			alias = req.FormValue("alias")
-		}
-		if alias == "" {
-			var err error
-			str, err = s.CreateRandom(u, req)
-			if err != nil {
-				log.Println(req.RemoteAddr, err)
-				response(w, err.Error(), 400)
-				return
-			}
-		} else {
-			str, err = s.Create(u, req, alias)
-			if err != nil {
-				log.Println(req.RemoteAddr, err)
-				response(w, err.Error(), 400)
-				return
-			}
-		}
-		response(w, str, 200)
-		log.Println(req.RemoteAddr, "created a new url", str,
-				"redirecting to", u.String())
-		return
+		err = s.ServePOST(w, req)
 	} else if req.Method == "GET" {
-		if req.URL.Path == "/favicon.ico" {
-			w.WriteHeader(200)
-			w.Write([]byte(favicon))
-			return
-		}
-		if req.URL.Path == cfg.BaseURL {
-			w.WriteHeader(200)
-			w.Write([]byte(indexPage))
-			return
-		}
-		url, ok := s.GetRedirect(req.URL.Path[1:])
-		if !ok {
-			response(w, "Page not found", 404)
-			return
-		}
-		if cfg.Network.Fcgi {
-			w.WriteHeader(302)
-			w.Header().Set("Location", url)
-		} else {
-			http.Redirect(w, req, url, http.StatusSeeOther)
-		}
+		err = s.ServeGET(w, req)
+	} else {
+		err = errors.New("Invalid method")
+	}
+	if err != nil {
+		log.Println("[" + req.RemoteAddr + "]", err)
+		response(w, err.Error(), 400)
 	}
 }
 
-func main() {
-
+func start() error {
 	shortener := NewShortener()
 
-        if err := load(); err != nil {
-                log.Fatalln(err)
-        }
+        if err := load(); err != nil { return err }
 
         var listener net.Listener
         if cfg.Network.Type == "tcp" {
                 addr := cfg.Network.Address + ":" +
                                         strconv.Itoa(cfg.Network.Port)
                 l, err := net.Listen("tcp", addr)
-                if err != nil {
-                        log.Fatalln(err)
-                }
+                if err != nil { return err }
                 listener = l
                 log.Println("Listening on", addr)
         } else if cfg.Network.Type == "unix" {
                 os.Remove(cfg.Network.Unix)
                 unixAddr, err := net.ResolveUnixAddr("unix", cfg.Network.Unix)
-                if err != nil {
-                        log.Fatalln(err)
-                }
+                if err != nil { return err }
                 l, err := net.ListenUnix("unix", unixAddr)
-                if err != nil {
-                        log.Fatalln(err)
-                }
+                if err != nil { return err }
                 listener = l
                 log.Println("Listening on unix:" + cfg.Network.Unix)
         } else {
-                log.Fatalln("invalid network type", cfg.Network.Type)
+		return errors.New("invalid network type " + cfg.Network.Type)
         }
 
 	if cfg.SaveLinks != "" {
@@ -370,28 +305,28 @@ func main() {
 
 	var err error
 	page, err = template.New("html").Parse(htmlPage)
-	if err != nil {
-		log.Fatalln(err)
-	}
+	if err != nil { return err }
 	var buf bytes.Buffer
 	data := templateData{"", "", cfg.Alias, cfg.BaseURL, cfg.AbuseEmail}
-	if err := page.Execute(&buf, data); err != nil {
-		log.Fatalln(err)
-	}
+	if err := page.Execute(&buf, data); err != nil { return err }
 	indexPage = buf.String()
 
 	go shortener.UpdateLength()
 	if cfg.SaveLinks != "" {
-		go shortener.SaveLinks()
+		go func() {
+			shortener.newLinks = NewStack()
+			for {
+				err := shortener.SaveLinks()
+				if err != nil { log.Println(err) }
+				time.Sleep(time.Second * saveLinksEvery)
+			}
+		}()
 	}
 	
-	if cfg.Network.Fcgi {
-		if err := fcgi.Serve(listener, shortener); err != nil {
-			log.Fatalln(err)
-		}
-	} else {
-		if err := http.Serve(listener, shortener); err != nil {
-			log.Fatalln(err)
-		}
-	}
+	if cfg.Network.Fcgi { return fcgi.Serve(listener, shortener) }
+	return http.Serve(listener, shortener)
+}
+
+func main() {
+	if err := start(); err != nil { log.Println(err) }
 }
