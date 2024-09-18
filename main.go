@@ -10,7 +10,7 @@ import (
         "net/http"
         "net/http/fcgi"
 	"text/template"
-	"math/rand"
+	"crypto/rand"
 	"math"
 	"os"
 	"bytes"
@@ -27,18 +27,19 @@ const updateLengthEvery = 90 // seconds
 const maxRandLength = 16 // 2 + ln(2^64)/ln(36) < 16
 
 type templateData struct {
-	Error	string
-	Url	string
-	Alias	bool
-	BaseURL	string
+	Error		string
+	Url		string
+	Alias		bool
+	BaseURL		string
+	AbuseEmail	string
 }
 
 type shortener struct {
-	clients map[string]int64
-	redirects map[string]string
-	lock sync.Mutex
-	newLinks *stack
-	linkLength int
+	clients		map[string]int64
+	redirects	map[string]string
+	lock		sync.Mutex
+	newLinks	*stack
+	linkLength	int
 }
 
 var page *template.Template
@@ -147,14 +148,15 @@ func (s *shortener) SaveLinks() {
 	}
 }
 
-func randomString(n int) string {
+func randomString(n int) (string, error) {
 	var random [maxRandLength]byte // n should never be above maxRandLength
 	b := make([]byte, n)
-	rand.Read(random[:n])
+	_, err := rand.Read(random[:n])
+	if err != nil { return "", err }
 	for i := range b {
 		b[i] = characters[int64(random[i]) % int64(len(characters))]
 	}
-	return string(b)
+	return string(b), nil
 }
 
 func response(w http.ResponseWriter, str string, code int) {
@@ -166,7 +168,8 @@ func response(w http.ResponseWriter, str string, code int) {
 	} else {
 		a = str
 	}
-	err := page.Execute(w, templateData{a, b, cfg.Alias, cfg.BaseURL})
+	err := page.Execute(w, templateData{
+		a, b, cfg.Alias, cfg.BaseURL, cfg.AbuseEmail})
 	if err != nil {
 		log.Println(err)
 	}
@@ -210,16 +213,18 @@ func (s *shortener) Create(u *url.URL, req *http.Request, alias string) (
 	return req.URL.String() + alias, nil
 }
 
-func (s *shortener) CreateRandom(u *url.URL, req *http.Request) string {
+func (s *shortener) CreateRandom(u *url.URL, req *http.Request) (string, error) {
 	var str string
 	// check if the link is already taken
 	for i := 0; ; i++ {
-		str = randomString(s.linkLength + i)
+		var err error
+		str, err = randomString(s.linkLength + i)
+		if err != nil { return "", err }
 		if err := s.AddRedirect(str, u.String()); err == nil {
 			break
 		}
 	}
-	return req.URL.String() + str
+	return req.URL.String() + str, nil
 }
 
 func (s *shortener) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -246,6 +251,11 @@ func (s *shortener) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		// check if url is a valid url
 		urlValue := req.FormValue("url")
+		if urlValue == "" {
+			log.Println(req.RemoteAddr, "missing url")
+			response(w, "Missing URL", 400)
+			return
+		}
 		if len(urlValue) >= maxUrlLength {
 			log.Println(req.RemoteAddr, "url too long")
 			response(w, "URL is too long", 400)
@@ -274,7 +284,13 @@ func (s *shortener) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			alias = req.FormValue("alias")
 		}
 		if alias == "" {
-			str = s.CreateRandom(u, req)
+			var err error
+			str, err = s.CreateRandom(u, req)
+			if err != nil {
+				log.Println(req.RemoteAddr, err)
+				response(w, err.Error(), 400)
+				return
+			}
 		} else {
 			str, err = s.Create(u, req, alias)
 			if err != nil {
@@ -314,7 +330,6 @@ func (s *shortener) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 func main() {
 
-	rand.Seed(time.Now().UnixNano())
 	shortener := NewShortener()
 
         if err := load(); err != nil {
@@ -359,7 +374,7 @@ func main() {
 		log.Fatalln(err)
 	}
 	var buf bytes.Buffer
-	data := templateData{"", "", cfg.Alias, cfg.BaseURL}
+	data := templateData{"", "", cfg.Alias, cfg.BaseURL, cfg.AbuseEmail}
 	if err := page.Execute(&buf, data); err != nil {
 		log.Fatalln(err)
 	}

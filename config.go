@@ -10,6 +10,7 @@ type config struct {
 	Alias		bool	`fig:"alias"`
 	CSProtection	bool	`fig:"cs-protection"`
 	RateLimit	int64	`fig:"rate-limit" default:"3"`
+	AbuseEmail	string  `fig:"abuse-email"`
         Network         struct {
 		Fcgi	bool	`fig:"fcgi"`
                 Type    string  `fig:"type" default:"tcp"`
