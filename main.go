@@ -32,6 +32,7 @@ type templateData struct {
 	Alias		bool
 	BaseURL		string
 	AbuseEmail	string
+	Domain		string
 }
 
 type shortener struct {
@@ -50,6 +51,24 @@ var htmlPage string
 
 //go:embed static/favicon.ico
 var favicon string
+
+func removePort(v string) string {
+	i := strings.LastIndex(v, ":")
+	if i == -1 { return v }
+	return v[:i]
+}
+
+func RemoteIP(req *http.Request) string {
+	if cfg.Network.Fcgi { return removePort(req.RemoteAddr) }
+	ip := req.Header.Get("X-Real-IP")
+	if ip == "" {
+		s := req.RemoteAddr
+		s = strings.Replace(s, "[", "", 1)
+		s = strings.Replace(s, "]", "", 1)
+		return removePort(s)
+	}
+	return ip
+}
 
 func NewShortener() *shortener {
 	return &shortener{
@@ -146,15 +165,15 @@ func response(w http.ResponseWriter, str string, code int) {
 	info := ""
 	if code == 200 { alias = str } else { info = str }
 	err := page.Execute(w, templateData{
-		info, alias, cfg.Alias, cfg.BaseURL, cfg.AbuseEmail})
+		info, alias, cfg.Alias,
+		cfg.BaseURL, cfg.AbuseEmail, cfg.Domain,
+	})
 	if err != nil { log.Println(err) }
 }
 
 func (s *shortener) CheckIP(req *http.Request) error {
 	if cfg.RateLimit == 0 { return nil }
-	i := strings.LastIndex(req.RemoteAddr, ":")
-	if i < 0 { return errors.New("Invalid remote address") }
-	addr := req.RemoteAddr[:i]
+	addr := RemoteIP(req)
 	// check when was the last time the ip created an url
 	last, ok := s.clients[addr]
 	now := time.Now().Unix()
@@ -179,7 +198,7 @@ func (s *shortener) Create(u *url.URL, req *http.Request, alias string) (
 	if err := s.AddRedirect(alias, u.String()); err != nil {
 		return "", err
 	}
-	return req.URL.String() + alias, nil
+	return req.URL.RequestURI() + alias, nil
 }
 
 func (s *shortener) randomLink(u *url.URL, req *http.Request) (string, error) {
@@ -193,16 +212,20 @@ func (s *shortener) randomLink(u *url.URL, req *http.Request) (string, error) {
 			break
 		}
 	}
-	return req.URL.String() + str, nil
+	return req.URL.RequestURI() + str, nil
 }
 
 func (s *shortener) ServePOST(w http.ResponseWriter, req *http.Request) error {
-	if cfg.CSProtection {
-		// prevent cross-site request
-		u, err := url.ParseRequestURI(req.Header.Get("Origin"))
-		if err != nil { return errors.New("Invalid origin header") }
-		if req.Host != u.Host {
-			return errors.New("Cross-Site request detected")
+	if cfg.CSProtection { // check for cross-site requests
+		origin := req.Header.Get("Origin")
+		if origin != "" {
+			u, err := url.ParseRequestURI(origin)
+			if err != nil {
+				return errors.New("Invalid origin header")
+			}
+			if req.Host != u.Host {
+				return errors.New("Invalid cross-site request")
+			}
 		}
 	}
 	if req.URL.Path != cfg.BaseURL { return errors.New("Page not found") }
@@ -230,7 +253,7 @@ func (s *shortener) ServePOST(w http.ResponseWriter, req *http.Request) error {
 		if err != nil { return err }
 	}
 	response(w, str, 200)
-	log.Println("[" + req.RemoteAddr + "]", "created a new url", str,
+	log.Println("[" + RemoteIP(req) + "]", "created a new url", str,
 			"redirecting to", u.String())
 	return nil
 }
@@ -267,7 +290,7 @@ func (s *shortener) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		err = errors.New("Invalid method")
 	}
 	if err != nil {
-		log.Println("[" + req.RemoteAddr + "]", err)
+		log.Println("[" + RemoteIP(req) + "]", err)
 		response(w, err.Error(), 400)
 	}
 }
@@ -307,7 +330,9 @@ func start() error {
 	page, err = template.New("html").Parse(htmlPage)
 	if err != nil { return err }
 	var buf bytes.Buffer
-	data := templateData{"", "", cfg.Alias, cfg.BaseURL, cfg.AbuseEmail}
+	data := templateData{
+		"", "", cfg.Alias, cfg.BaseURL, cfg.AbuseEmail, cfg.Domain,
+	}
 	if err := page.Execute(&buf, data); err != nil { return err }
 	indexPage = buf.String()
 

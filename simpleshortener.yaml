@@ -4,6 +4,7 @@ alias: true # allow creation of links with specific alias
 cs-protection: true # protection from cross-site requests
 rate-limit: 3 # seconds between link creation per ip
 abuse-email: "" # display an email address for abuse reports
+domain: "localhost" # domain used when displaying created links
 network:
   fcgi: false # listen as a fcgi program instead of http server
   type: "tcp" # network protocol (tcp or unix)

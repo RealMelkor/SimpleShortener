@@ -11,6 +11,7 @@ type config struct {
 	CSProtection	bool	`fig:"cs-protection"`
 	RateLimit	int64	`fig:"rate-limit" default:"3"`
 	AbuseEmail	string  `fig:"abuse-email"`
+	Domain		string	`fig:"domain"`
         Network         struct {
 		Fcgi	bool	`fig:"fcgi"`
                 Type    string  `fig:"type" default:"tcp"`
